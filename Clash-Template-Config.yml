@@ -178,7 +178,7 @@ BASE-DATA:
       # - local
     proxy-providers-common:
       airport-interval: &airport-interval 36000
-      url-airport: &url-airport "https://kk.mishuwu.me/api/v1/client/subscribe?token=54c4cdb71e4f9f0fda6e66c38f6826ed" # 这里填入机场链接
+      url-airport: &url-airport "" # 这里填入机场链接
       proxy-file-path-AirPort: &proxy-file-path-AirPort myprovider/proxies/provider-airport.yml
       url-add-on: &url-add-on "" # 这里填入第二个机场链接
       proxy-file-path-Add-On: &proxy-file-path-Add-On myprovider/proxies/provider-add-on.yml
