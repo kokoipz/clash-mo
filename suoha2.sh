@@ -7,9 +7,11 @@ set -euo pipefail
 # - 新增：菜单选项 4.域名绑定查看（查看当前保存的临时域名、绑定域名、端口等信息，并自检）
 # - 新增：停止服务/清空缓存时自动删除配置文件
 # - 修复：os_index 返回值污染、严格模式管道崩溃、read 异常退出等问题
+# - 修复：极端环境下 HOME 变量未定义导致 set -u 报错崩溃的问题
 # =========================
 
-CONFIG_FILE="${HOME}/.suoha_tunnel_config"
+# 完美解决 HOME 未绑定的问题：如果 $HOME 为空，默认回退到 /root 目录
+CONFIG_FILE="${HOME:-/root}/.suoha_tunnel_config"
 
 linux_os=("Debian" "Ubuntu" "CentOS" "Fedora" "Alpine")
 linux_update=("apt update" "apt update" "yum -y update" "yum -y update" "apk update")
