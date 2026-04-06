@@ -4,13 +4,12 @@ set -euo pipefail
 # suoha x-tunnel FINAL
 # - Quick Tunnel (trycloudflare) + Named Tunnel (bind domain)
 # - Auto self-check / debug
-# - 新增：菜单选项 4.域名绑定查看（查看当前保存的临时域名、绑定域名、端口等信息，并自检）
-# - 新增：停止服务/清空缓存时自动删除配置文件
+# - 新增：菜单选项 4.域名绑定查看
 # - 修复：os_index 返回值污染、严格模式管道崩溃、read 异常退出等问题
 # - 修复：极端环境下 HOME 变量未定义导致 set -u 报错崩溃的问题
+# - 修复：opera-proxy 下载链接 404 问题（引入多 URL 轮询下载机制）
 # =========================
 
-# 完美解决 HOME 未绑定的问题：如果 $HOME 为空，默认回退到 /root 目录
 CONFIG_FILE="${HOME:-/root}/.suoha_tunnel_config"
 
 linux_os=("Debian" "Ubuntu" "CentOS" "Fedora" "Alpine")
@@ -31,7 +30,6 @@ os_index(){
     fi
     n=$((n+1))
   done
-  # 警告信息必须输出到标准错误流(>&2)，防止污染返回值
   >&2 echo "当前系统 ${pretty:-Unknown} 没有适配"
   >&2 echo "默认使用APT包管理器"
   echo 0
@@ -75,14 +73,21 @@ stop_screen(){
   done
 }
 
+# 强化版下载函数：支持传入多个备用 URL，挨个尝试，解决 404 问题
 download_bin(){
-  local url="$1" out="$2"
-  if [[ ! -f "$out" ]]; then
-    curl -fsSL "$url" -o "$out" || {
-      >&2 echo "[ERROR] 下载 $out 失败，请检查网络！"
-      exit 1
-    }
-  fi
+  local out="$1"
+  shift
+  if [[ -f "$out" ]]; then return 0; fi
+  
+  for url in "$@"; do
+    if curl -fsSL "$url" -o "$out"; then
+      return 0
+    fi
+    rm -f "$out" # 下载失败（如 404）会残留空文件或错误信息，需清理
+  done
+  
+  >&2 echo "[ERROR] 下载 $out 失败，所有备用链接均 404 或网络异常！"
+  exit 1
 }
 
 detect_ws_port(){
@@ -149,13 +154,10 @@ self_check(){
   fi
   cat <<EOF
 解释：
-- 401 Unauthorized：正常！说明已到达 x-tunnel，但需要 token（你设的 token）。
-- 200 OK：也可能正常（HEAD/探测请求），请用客户端带 token 真正连接测试。
-- 502 Bad Gateway：Cloudflare 连不到本地服务（端口/协议/路由类型不匹配）。
-- 530：被 Cloudflare Access/应用策略拦截。
-若绑定域名失败但临时域名可用：
-- 优先检查 Cloudflare Public Hostname 指向是否是 http://127.0.0.1:${wsport:-未知}
-- 确认同一个 hostname 没有多条冲突路由
+- 401 Unauthorized：正常！说明已到达 x-tunnel，但需要 token。
+- 200 OK：也可能正常，请用客户端带 token 真正连接测试。
+- 502 Bad Gateway：Cloudflare 连不到本地服务。
+- 530：被 Cloudflare Access 拦截。
 EOF
 }
 
@@ -188,19 +190,28 @@ remove_config(){
 quicktunnel(){
   case "$(uname -m)" in
     x86_64|x64|amd64)
-      download_bin "https://www.baipiao.eu.org/xtunnel/x-tunnel-linux-amd64" "x-tunnel-linux"
-      download_bin "https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-amd64" "opera-linux"
-      download_bin "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" "cloudflared-linux"
+      download_bin "x-tunnel-linux" "https://www.baipiao.eu.org/xtunnel/x-tunnel-linux-amd64"
+      download_bin "opera-linux" \
+        "https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy-linux-amd64" \
+        "https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-amd64" \
+        "https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy_linux_amd64"
+      download_bin "cloudflared-linux" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
       ;;
     i386|i686)
-      download_bin "https://www.baipiao.eu.org/xtunnel/x-tunnel-linux-386" "x-tunnel-linux"
-      download_bin "https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-386" "opera-linux"
-      download_bin "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-386" "cloudflared-linux"
+      download_bin "x-tunnel-linux" "https://www.baipiao.eu.org/xtunnel/x-tunnel-linux-386"
+      download_bin "opera-linux" \
+        "https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy-linux-386" \
+        "https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-386" \
+        "https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy_linux_386"
+      download_bin "cloudflared-linux" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-386"
       ;;
     armv8|arm64|aarch64)
-      download_bin "https://www.baipiao.eu.org/xtunnel/x-tunnel-linux-arm64" "x-tunnel-linux"
-      download_bin "https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-arm64" "opera-linux"
-      download_bin "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64" "cloudflared-linux"
+      download_bin "x-tunnel-linux" "https://www.baipiao.eu.org/xtunnel/x-tunnel-linux-arm64"
+      download_bin "opera-linux" \
+        "https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy-linux-arm64" \
+        "https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-arm64" \
+        "https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy_linux_arm64"
+      download_bin "cloudflared-linux" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64"
       ;;
     *)
       say "当前架构$(uname -m)没有适配"
@@ -212,7 +223,7 @@ quicktunnel(){
 
   if [[ -n "${wsport:-}" ]]; then
     if ss -lnt 2>/dev/null | awk '{print $4}' | grep -qE ":${wsport}$"; then
-      say "[ERROR] 固定端口 ${wsport} 已被占用，请手动释放或选择其他端口"
+      say "[ERROR] 固定端口 ${wsport} 已被占用，请手动释放"
       exit 1
     fi
   fi
@@ -255,19 +266,16 @@ quicktunnel(){
   for _ in $(seq 1 60); do
     RESP="$(curl -s "http://127.0.0.1:${metricsport}/metrics" || true)"
     if echo "$RESP" | grep -q 'userHostname='; then
-      # 避免 grep 被管线卡死，直接用 sed 提取并忽略错误
       TRY_DOMAIN="$(echo "$RESP" | sed -nE 's/.*userHostname="?https?:\/\/([^"]+)".*/\1/p' | head -n1 || true)"
       break
     fi
     sleep 1
   done
 
-  # 保存配置，便于后续查看
   save_config
-
   clear
   say "=============================="
-  say "梭哈模式：启动完成（配置已保存，可用选项4查看）"
+  say "梭哈模式：启动完成"
   say "------------------------------"
   say "本地监听 ws 端口: ${wsport}"
 
@@ -278,7 +286,7 @@ quicktunnel(){
       say "【临时域名 Quick Tunnel】 ${TRY_DOMAIN}:443   身份令牌: ${token}"
     fi
   else
-    say "【临时域名 Quick Tunnel】未解析到（可稍后查看 metrics）"
+    say "【临时域名 Quick Tunnel】未解析到"
   fi
 
   if [[ "${bind_enable:-0}" == "1" ]]; then
@@ -288,21 +296,15 @@ quicktunnel(){
       else
         say "【绑定域名 Named Tunnel】 ${bind_domain}:443   身份令牌: ${token}"
       fi
-      say "（请确保 Cloudflare 面板 Public Hostname 已正确指向 http://127.0.0.1:${wsport}）"
     else
-      say "【绑定域名 Named Tunnel】已启用（未提供具体域名，仅后台运行）"
-      say "（请在 Cloudflare 面板配置 Public Hostname 指向 http://127.0.0.1:${wsport}）"
+      say "【绑定域名 Named Tunnel】已启用"
     fi
   else
     say "【绑定域名 Named Tunnel】未启用"
   fi
 
   PUBIP="$(curl -4 -s https://www.cloudflare.com/cdn-cgi/trace | grep ip= | cut -d= -f2 || true)"
-  if [[ -n "$PUBIP" ]]; then
-    say "metrics: http://${PUBIP}:${metricsport}/metrics"
-  else
-    say "metrics: http://<你的公网IP>:${metricsport}/metrics"
-  fi
+  say "metrics: http://${PUBIP:-<你的公网IP>}:${metricsport}/metrics"
   say "=============================="
 
   self_check "${bind_domain:-}" "${TRY_DOMAIN:-}" "${wsport:-}"
@@ -323,7 +325,7 @@ view_domains(){
         say "【临时域名 Quick Tunnel】 ${try_domain}:443   身份令牌: ${token}"
       fi
     else
-      say "【临时域名 Quick Tunnel】无记录（可能上次未解析成功）"
+      say "【临时域名 Quick Tunnel】无记录"
     fi
 
     if [[ "${bind_enable:-0}" == "1" ]]; then
@@ -334,28 +336,15 @@ view_domains(){
           say "【绑定域名 Named Tunnel】 ${bind_domain}:443   身份令牌: ${token}"
         fi
       else
-        say "【绑定域名 Named Tunnel】已启用（上次未提供具体域名）"
+        say "【绑定域名 Named Tunnel】已启用"
       fi
-      say "（请确保 Cloudflare 面板 Public Hostname 已正确指向 http://127.0.0.1:${wsport:-未知}）"
     else
       say "【绑定域名 Named Tunnel】未启用"
     fi
-
-    if [[ -n "${metricsport:-}" ]]; then
-      PUBIP="$(curl -4 -s https://www.cloudflare.com/cdn-cgi/trace | grep ip= | cut -d= -f2 || true)"
-      if [[ -n "$PUBIP" ]]; then
-        say "metrics: http://${PUBIP}:${metricsport}/metrics"
-      else
-        say "metrics: http://<你的公网IP>:${metricsport}/metrics"
-      fi
-    fi
     say "=============================="
-
-    # 实时自检（使用保存的域名）
     self_check "${bind_domain:-}" "${try_domain:-}" "${wsport:-}"
   else
-    say "未找到上次启动的配置记录（可能未启动过或已清理）"
-    say "请先运行选项1启动服务"
+    say "未找到上次启动的配置记录，请先运行选项1启动服务"
   fi
 }
 
@@ -380,7 +369,6 @@ say "3.清空缓存"
 say "4.域名绑定查看"
 printf "0.退出脚本\n\n"
 
-# 加上 || true 防止读取异常输入时触发 set -e 导致脚本直接结束
 read -r -p "请选择模式(默认1):" mode || true
 mode="${mode:-1}"
 
@@ -389,9 +377,6 @@ if [[ "$mode" == "1" ]]; then
   opera="${opera:-0}"
   if [[ "$opera" == "1" ]]; then
     say "注意:opera前置代理仅支持AM,AS,EU地区"
-    say "AM: 北美地区"
-    say "AS: 亚太地区"
-    say "EU: 欧洲地区"
     read -r -p "请输入opera前置代理的国家代码(默认AM):" country || true
     country="${country:-AM}"
     country="$(echo "$country" | tr '[:lower:]' '[:upper:]')"
@@ -404,7 +389,7 @@ if [[ "$mode" == "1" ]]; then
   read -r -p "请选择cloudflared连接模式IPV4或者IPV6(输入4或6,默认4):" ips || true
   ips="${ips:-4}"
   if [[ "$ips" != "4" && "$ips" != "6" ]]; then
-    say "请输入正确的cloudflared连接模式"
+    say "请输入正确的连接模式"
     exit 1
   fi
 
@@ -425,17 +410,13 @@ if [[ "$mode" == "1" ]]; then
   cf_tunnel_token=""
   bind_domain=""
   if [[ "$bind_enable" == "1" ]]; then
-    say "提示：绑定域名需要你在 Cloudflare Zero Trust 创建 Named Tunnel 并配置 Public Hostname"
     read -r -p "请输入 Cloudflare Tunnel Token(必填):" cf_tunnel_token || true
     if [[ -z "${cf_tunnel_token:-}" ]]; then
-      say "未提供 Tunnel Token，已取消绑定域名功能"
       bind_enable=0
     else
-      read -r -p "请输入绑定域名(可留空，仅用于展示和自检):" bind_domain || true
+      read -r -p "请输入绑定域名(可留空):" bind_domain || true
       bind_domain="${bind_domain:-}"
-
       if [[ "$fixp" == "0" ]]; then
-        say "警告：使用绑定域名时强烈建议固定 ws 端口，否则端口变动会导致 Cloudflare 面板配置失效"
         read -r -p "是否现在固定端口？(1.是[推荐], 0.否): " force_fix || true
         force_fix="${force_fix:-1}"
         if [[ "$force_fix" == "1" ]]; then
@@ -452,7 +433,7 @@ if [[ "$mode" == "1" ]]; then
   stop_screen opera
   stop_screen argo
   stop_screen cfbind
-  remove_config  # 清理旧配置
+  remove_config
   clear
   sleep 1
   quicktunnel
